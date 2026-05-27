@@ -12,3 +12,6 @@ latest_logs/
 archived_logs/
 app_state/
 *.egg-info/
+
+# AWS SAM
+.aws-sam/

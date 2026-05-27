@@ -1,4 +1,4 @@
-import { getUserId } from "./session.js";
+import { getUserId, getToken } from "./session.js";
 
 export function escapeHtml(value = "") {
   return value
@@ -23,10 +23,16 @@ export function showToast(message, type = "") {
 export async function api(path, options = {}) {
   const headers = new Headers(options.headers || {});
   const userId = getUserId();
+  const token = getToken();
   if (userId) {
     headers.set("X-User-Id", userId);
   }
-  const response = await fetch(path, { ...options, headers });
+  if (token) {
+    headers.set("Authorization", `Bearer ${token}`);
+  }
+  const baseUrl = window.API_BASE_URL || "";
+  const fullPath = baseUrl + path;
+  const response = await fetch(fullPath, { ...options, headers });
   const raw = await response.text();
   let body = raw;
   try {

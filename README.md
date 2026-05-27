@@ -112,6 +112,24 @@ pytest -v
 
 ---
 
+## Team workflow (avoid conflicts)
+
+This repo is designed **local-first**:
+- Local dev should use `.env` with `AI_BACKEND=local`, `STORAGE_BACKEND=local`, `USERSTORE_BACKEND=sqlite`, `VECTOR_BACKEND=local`.
+- Only flip to AWS backends for shared dev / staging / prod environments.
+
+Frontend config rules:
+- `frontend/config.js` is **runtime config** and must not contain any secrets (API keys, credentials).
+- For local dev with `SERVE_FRONTEND=true`, keep `window.API_BASE_URL = \"\"` (same-origin).
+- For AWS, set `window.API_BASE_URL` to the `ApiEndpoint` output from SAM.
+
+Recommended dev setup options:
+1) **Shared dev stack**: one AWS stack (e.g. `studybot-dev`) and everyone points FE to it.
+   - Use a per-user prefix/namespace in S3 keys (and optionally DynamoDB sort keys) to avoid overwriting each other.
+2) **Per-developer stack**: each dev deploys their own stack (`studybot-dev-<name>`) and points FE to their own `ApiEndpoint`.
+
+---
+
 ## What's in the code
 
 ```

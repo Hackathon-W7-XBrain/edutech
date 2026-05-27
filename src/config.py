@@ -34,6 +34,7 @@ class Config:
     # Vector
     vector_backend: str = _env("VECTOR_BACKEND", "local")
     vector_bedrock_kb_id: str = _env("VECTOR_BEDROCK_KB_ID", "")
+    vector_bedrock_data_source_id: str = _env("VECTOR_BEDROCK_DATA_SOURCE_ID", "")
 
     # Logging
     log_level: str = _env("LOG_LEVEL", "INFO")

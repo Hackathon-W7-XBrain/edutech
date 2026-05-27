@@ -68,6 +68,28 @@ class DynamoDBUserStore:
         )
         return resp.get("Items", [])
 
+    def create_folder(self, user_id: str, name: str) -> dict:
+        folder_id = f"FOLDER#{secrets.token_hex(4)}"
+        self.table.put_item(
+            Item={
+                "user_id": user_id,
+                "sk": folder_id,
+                "name": name,
+                "created_at": _now(),
+            }
+        )
+        return {"folder_id": folder_id.replace("FOLDER#", ""), "name": name}
+
+    def list_folders(self, user_id: str) -> list:
+        resp = self.table.query(
+            KeyConditionExpression="user_id = :u AND begins_with(sk, :p)",
+            ExpressionAttributeValues={":u": user_id, ":p": "FOLDER#"},
+        )
+        return [
+            {"folder_id": item["sk"].replace("FOLDER#", ""), "name": item.get("name", ""), "created_at": item.get("created_at", "")}
+            for item in resp.get("Items", [])
+        ]
+
     def log_query(self, user_id: str, query: str, answer: str) -> None:
         ts = _now()
         self.table.put_item(
@@ -158,6 +180,276 @@ class DynamoDBUserStore:
         if hashed != item["password_hash"]:
             return None
         return {"user_id": username, "username": item["username"]}
+
+    # ── Folder methods ──────────────────────────────────────
+
+    def get_document(self, user_id: str, doc_id: str) -> dict | None:
+        resp = self.table.get_item(Key={"user_id": user_id, "sk": f"DOC#{doc_id}"})
+        item = resp.get("Item")
+        if not item:
+            return None
+        return {**item, "doc_id": item.get("doc_id", doc_id)}
+
+    def rename_folder(self, user_id: str, folder_id: str, name: str) -> dict:
+        sk = f"FOLDER#{folder_id}"
+        resp = self.table.get_item(Key={"user_id": user_id, "sk": sk})
+        if not resp.get("Item"):
+            raise ValueError("Folder not found")
+        self.table.update_item(
+            Key={"user_id": user_id, "sk": sk},
+            UpdateExpression="SET #n = :n",
+            ExpressionAttributeNames={"#n": "name"},
+            ExpressionAttributeValues={":n": name},
+        )
+        return {"folder_id": folder_id, "name": name}
+
+    def get_folder(self, user_id: str, folder_id: str) -> dict | None:
+        sk = f"FOLDER#{folder_id}"
+        resp = self.table.get_item(Key={"user_id": user_id, "sk": sk})
+        item = resp.get("Item")
+        if not item:
+            return None
+        docs = self.get_folder_docs(user_id, folder_id)
+        return {"folder_id": folder_id, "name": item.get("name", ""), "created_at": item.get("created_at", ""), "docs": docs}
+
+    def get_folder_by_name(self, user_id: str, name: str) -> dict | None:
+        folders = self.list_folders(user_id)
+        for f in folders:
+            if f.get("name") == name:
+                return self.get_folder(user_id, f["folder_id"])
+        return None
+
+    def add_docs_to_folder(self, user_id: str, folder_id: str, doc_ids: list[str]) -> dict:
+        sk = f"FOLDER#{folder_id}"
+        resp = self.table.get_item(Key={"user_id": user_id, "sk": sk})
+        if not resp.get("Item"):
+            raise ValueError("Folder not found")
+        for doc_id in doc_ids:
+            link_sk = f"FOLDOC#{folder_id}#{doc_id}"
+            self.table.put_item(
+                Item={"user_id": user_id, "sk": link_sk, "folder_id": folder_id, "doc_id": doc_id, "created_at": _now()}
+            )
+        return {"folder_id": folder_id, "name": resp["Item"].get("name", "")}
+
+    def get_folder_docs(self, user_id: str, folder_id: str) -> list[dict]:
+        resp = self.table.query(
+            KeyConditionExpression="user_id = :u AND begins_with(sk, :p)",
+            ExpressionAttributeValues={":u": user_id, ":p": f"FOLDOC#{folder_id}#"},
+        )
+        links = resp.get("Items", [])
+        docs = []
+        for link in links:
+            doc = self.get_document(user_id, link["doc_id"])
+            if doc:
+                docs.append(doc)
+        return docs
+
+    # ── Topic methods ──────────────────────────────────────
+
+    def replace_folder_topics(self, user_id: str, folder_id: str, topics: list[dict]) -> list[dict]:
+        # Delete old topics
+        old = self.table.query(
+            KeyConditionExpression="user_id = :u AND begins_with(sk, :p)",
+            ExpressionAttributeValues={":u": user_id, ":p": f"TOPIC#{folder_id}#"},
+        )
+        for item in old.get("Items", []):
+            self.table.delete_item(Key={"user_id": user_id, "sk": item["sk"]})
+        # Insert new
+        result = []
+        for i, t in enumerate(topics):
+            topic_id = secrets.token_hex(4)
+            sk = f"TOPIC#{folder_id}#{topic_id}"
+            item = {
+                "user_id": user_id,
+                "sk": sk,
+                "topic_id": topic_id,
+                "folder_id": folder_id,
+                "title": t.get("title", f"Topic {i+1}"),
+                "summary": t.get("summary", ""),
+                "source_doc_ids": json.dumps(t.get("source_doc_ids", [])),
+                "created_at": _now(),
+            }
+            self.table.put_item(Item=item)
+            result.append({"topic_id": topic_id, "folder_id": folder_id, "title": item["title"], "summary": item["summary"], "source_doc_ids": t.get("source_doc_ids", [])})
+        return result
+
+    def list_folder_topics(self, user_id: str, folder_id: str) -> list[dict]:
+        resp = self.table.query(
+            KeyConditionExpression="user_id = :u AND begins_with(sk, :p)",
+            ExpressionAttributeValues={":u": user_id, ":p": f"TOPIC#{folder_id}#"},
+        )
+        return [
+            {
+                "topic_id": item.get("topic_id", ""),
+                "folder_id": folder_id,
+                "title": item.get("title", ""),
+                "summary": item.get("summary", ""),
+                "source_doc_ids": json.loads(item.get("source_doc_ids", "[]")) if isinstance(item.get("source_doc_ids"), str) else item.get("source_doc_ids", []),
+            }
+            for item in resp.get("Items", [])
+        ]
+
+    def get_topic(self, user_id: str, topic_id: str) -> dict | None:
+        # Scan for topic by topic_id since we don't know folder_id
+        resp = self.table.query(
+            KeyConditionExpression="user_id = :u",
+            FilterExpression="topic_id = :t",
+            ExpressionAttributeValues={":u": user_id, ":t": topic_id},
+        )
+        items = resp.get("Items", [])
+        if not items:
+            return None
+        item = items[0]
+        return {
+            "topic_id": topic_id,
+            "folder_id": item.get("folder_id", ""),
+            "title": item.get("title", ""),
+            "summary": item.get("summary", ""),
+            "source_doc_ids": json.loads(item.get("source_doc_ids", "[]")) if isinstance(item.get("source_doc_ids"), str) else item.get("source_doc_ids", []),
+        }
+
+    def get_topic_source_docs(self, user_id: str, topic_id: str) -> list[dict]:
+        topic = self.get_topic(user_id, topic_id)
+        if not topic:
+            return []
+        docs = []
+        for doc_id in topic.get("source_doc_ids", []):
+            doc = self.get_document(user_id, doc_id)
+            if doc:
+                docs.append(doc)
+        return docs
+
+    def touch_topic_question(self, user_id: str, folder_id: str, topic_id: str) -> None:
+        pass  # No-op for now
+
+    # ── Chat session methods ──────────────────────────────
+
+    def create_chat_session(self, user_id: str, folder_id: str, title: str | None = None, active_topic_id: str | None = None) -> dict:
+        session_id = secrets.token_hex(6)
+        sk = f"SESS#{folder_id}#{session_id}"
+        item = {
+            "user_id": user_id,
+            "sk": sk,
+            "session_id": session_id,
+            "folder_id": folder_id,
+            "title": title or "New Chat",
+            "active_topic_id": active_topic_id or "",
+            "created_at": _now(),
+        }
+        self.table.put_item(Item=item)
+        return {"session_id": session_id, "folder_id": folder_id, "title": item["title"], "active_topic_id": active_topic_id, "created_at": item["created_at"]}
+
+    def get_chat_session(self, user_id: str, session_id: str) -> dict | None:
+        resp = self.table.query(
+            KeyConditionExpression="user_id = :u",
+            FilterExpression="session_id = :s",
+            ExpressionAttributeValues={":u": user_id, ":s": session_id},
+        )
+        items = resp.get("Items", [])
+        if not items:
+            return None
+        item = items[0]
+        return {"session_id": session_id, "folder_id": item.get("folder_id", ""), "title": item.get("title", ""), "active_topic_id": item.get("active_topic_id"), "created_at": item.get("created_at", "")}
+
+    def list_chat_sessions(self, user_id: str, folder_id: str) -> list[dict]:
+        resp = self.table.query(
+            KeyConditionExpression="user_id = :u AND begins_with(sk, :p)",
+            ExpressionAttributeValues={":u": user_id, ":p": f"SESS#{folder_id}#"},
+        )
+        return [
+            {"session_id": item.get("session_id", ""), "folder_id": folder_id, "title": item.get("title", ""), "active_topic_id": item.get("active_topic_id"), "created_at": item.get("created_at", "")}
+            for item in resp.get("Items", [])
+        ]
+
+    def add_chat_message(self, user_id: str, session_id: str, role: str, content: str, **kwargs) -> dict:
+        ts = _now()
+        msg_id = secrets.token_hex(4)
+        sk = f"MSG#{session_id}#{ts}#{msg_id}"
+        item = {
+            "user_id": user_id,
+            "sk": sk,
+            "session_id": session_id,
+            "msg_id": msg_id,
+            "role": role,
+            "content": content[:5000],
+            "created_at": ts,
+        }
+        self.table.put_item(Item=item)
+        return {"msg_id": msg_id, "role": role, "content": content, "created_at": ts}
+
+    def list_chat_messages(self, user_id: str, session_id: str) -> list[dict]:
+        resp = self.table.query(
+            KeyConditionExpression="user_id = :u AND begins_with(sk, :p)",
+            ExpressionAttributeValues={":u": user_id, ":p": f"MSG#{session_id}#"},
+        )
+        return [
+            {"msg_id": item.get("msg_id", ""), "role": item.get("role", ""), "content": item.get("content", ""), "created_at": item.get("created_at", "")}
+            for item in resp.get("Items", [])
+        ]
+
+    # ── Quiz methods ──────────────────────────────────────
+
+    def record_topic_quiz_attempt(self, user_id: str, folder_id: str, topic_id: str, score: int, total: int, question_count: int, session_id: str | None = None) -> dict:
+        ts = _now()
+        attempt_id = secrets.token_hex(4)
+        sk = f"QUIZ#{folder_id}#{ts}#{attempt_id}"
+        item = {
+            "user_id": user_id,
+            "sk": sk,
+            "attempt_id": attempt_id,
+            "folder_id": folder_id,
+            "topic_id": topic_id,
+            "score": score,
+            "total": total,
+            "question_count": question_count,
+            "percentage": round(score / total * 100) if total else 0,
+            "session_id": session_id or "",
+            "created_at": ts,
+        }
+        self.table.put_item(Item=item)
+        return {"attempt_id": attempt_id, "score": score, "total": total, "percentage": item["percentage"], "created_at": ts}
+
+    def list_folder_quiz_attempts(self, user_id: str, folder_id: str, limit: int = 20) -> list[dict]:
+        resp = self.table.query(
+            KeyConditionExpression="user_id = :u AND begins_with(sk, :p)",
+            ExpressionAttributeValues={":u": user_id, ":p": f"QUIZ#{folder_id}#"},
+            ScanIndexForward=False,
+            Limit=limit,
+        )
+        return [
+            {
+                "attempt_id": item.get("attempt_id", ""),
+                "topic_id": item.get("topic_id", ""),
+                "score": int(item.get("score", 0)),
+                "total": int(item.get("total", 0)),
+                "percentage": int(item.get("percentage", 0)),
+                "question_count": int(item.get("question_count", 0)),
+                "created_at": item.get("created_at", ""),
+            }
+            for item in resp.get("Items", [])
+        ]
+
+    def get_folder_dashboard(self, user_id: str, folder_id: str) -> dict:
+        from decimal import Decimal
+        folder = self.get_folder(user_id, folder_id)
+        if not folder:
+            raise ValueError("Folder not found")
+        topics = self.list_folder_topics(user_id, folder_id)
+        sessions = self.list_chat_sessions(user_id, folder_id)
+        quizzes = self.list_folder_quiz_attempts(user_id, folder_id, limit=50)
+        avg_score = 0
+        if quizzes:
+            avg_score = round(sum(q.get("percentage", 0) for q in quizzes) / len(quizzes))
+        return {
+            "folder": folder,
+            "topic_count": len(topics),
+            "session_count": len(sessions),
+            "doc_count": len(folder.get("docs", [])),
+            "quiz_count": len(quizzes),
+            "avg_quiz_score": avg_score,
+            "recent_quizzes": quizzes[:10],
+            "topics": topics,
+        }
 
 
 class PostgresUserStore:

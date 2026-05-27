@@ -1,0 +1,211 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Transform: AWS::Serverless-2016-10-31
+Description: >
+  StudyBot AWS Backend (Hackathon W7)
+  Architecture: API Gateway (HTTP) -> Lambda -> DynamoDB, S3, Bedrock
+
+Globals:
+  Function:
+    Timeout: 30
+    MemorySize: 512
+    Runtime: python3.13
+
+Resources:
+  # ---------------------------------------------------------
+  # 1. Identity & Authentication Layer (Cognito)
+  # ---------------------------------------------------------
+  StudyBotUserPool:
+    Type: AWS::Cognito::UserPool
+    Properties:
+      UserPoolName: hofang-StudyBotUsers
+      UsernameAttributes:
+        - email
+      AutoVerifiedAttributes:
+        - email
+      Policies:
+        PasswordPolicy:
+          MinimumLength: 8
+          RequireUppercase: true
+          RequireLowercase: true
+          RequireNumbers: true
+          RequireSymbols: false
+      LambdaConfig:
+        PreSignUp: !GetAtt StudyBotPreSignUpFunction.Arn
+
+  StudyBotUserPoolClient:
+    Type: AWS::Cognito::UserPoolClient
+    Properties:
+      UserPoolId: !Ref StudyBotUserPool
+      ClientName: hofang-StudyBotWebClient
+      GenerateSecret: false
+      ExplicitAuthFlows:
+        - ALLOW_USER_SRP_AUTH
+        - ALLOW_REFRESH_TOKEN_AUTH
+
+  # ---------------------------------------------------------
+  # 2. Storage & Data Layer (S3 & DynamoDB)
+  # ---------------------------------------------------------
+  StudyBotFrontendBucket:
+    Type: AWS::S3::Bucket
+    Properties:
+      BucketName: !Sub "hofang-studybot-frontend-${AWS::AccountId}-${AWS::Region}"
+      WebsiteConfiguration:
+        IndexDocument: index.html
+        ErrorDocument: index.html
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: false
+        IgnorePublicAcls: false
+        BlockPublicPolicy: false
+        RestrictPublicBuckets: false
+
+  StudyBotFrontendBucketPolicy:
+    Type: AWS::S3::BucketPolicy
+    Properties:
+      Bucket: !Ref StudyBotFrontendBucket
+      PolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal: '*'
+            Action: 's3:GetObject'
+            Resource: !Sub "${StudyBotFrontendBucket.Arn}/*"
+
+
+  StudyBotStorageBucket:
+    Type: AWS::S3::Bucket
+    Properties:
+      BucketName: !Sub "hofang-studybot-storage-${AWS::AccountId}-${AWS::Region}"
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: true
+        IgnorePublicAcls: true
+        BlockPublicPolicy: true
+        RestrictPublicBuckets: true
+
+  StudyBotUserStoreTable:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      TableName: !Sub "hofang-studybot-userstore-${AWS::AccountId}"
+      BillingMode: PAY_PER_REQUEST
+      AttributeDefinitions:
+        - AttributeName: user_id
+          AttributeType: S
+        - AttributeName: sk
+          AttributeType: S
+      KeySchema:
+        - AttributeName: user_id
+          KeyType: HASH
+        - AttributeName: sk
+          KeyType: RANGE
+
+  # ---------------------------------------------------------
+  # 3. Edge Layer (API Gateway HTTP API)
+  # ---------------------------------------------------------
+  StudyBotApiGateway:
+    Type: AWS::Serverless::HttpApi
+    Properties:
+      Name: hofang-StudyBotApi
+      CorsConfiguration:
+        AllowOrigins:
+          - "*"
+        AllowHeaders:
+          - "Authorization"
+          - "X-User-Id"
+          - "Content-Type"
+        AllowMethods:
+          - "*"
+      Auth:
+        Authorizers:
+          CognitoAuth:
+            JwtConfiguration:
+              issuer: !Sub "https://cognito-idp.${AWS::Region}.amazonaws.com/${StudyBotUserPool}"
+              audience:
+                - !Ref StudyBotUserPoolClient
+            IdentitySource: "$request.header.Authorization"
+
+  # ---------------------------------------------------------
+  # 4. Compute Layer (Lambda FastAPI)
+  # ---------------------------------------------------------
+  StudyBotPreSignUpFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: hofang-StudyBotPreSignUp
+      CodeUri: .
+      Handler: src.cognito_trigger.pre_signup
+      Environment:
+        Variables:
+          PYTHONPATH: /var/task
+
+  StudyBotPreSignUpPermission:
+    Type: AWS::Lambda::Permission
+    Properties:
+      Action: lambda:InvokeFunction
+      FunctionName: !GetAtt StudyBotPreSignUpFunction.Arn
+      Principal: cognito-idp.amazonaws.com
+      SourceArn: !GetAtt StudyBotUserPool.Arn
+
+  StudyBotFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: hofang-StudyBotFunction
+      CodeUri: .
+      Handler: src.app.handler
+      Environment:
+        Variables:
+          SERVE_FRONTEND: "false"
+          AI_BACKEND: bedrock
+          STORAGE_BACKEND: s3
+          STORAGE_BUCKET: !Ref StudyBotStorageBucket
+          USERSTORE_BACKEND: dynamodb
+          USERSTORE_TABLE: !Ref StudyBotUserStoreTable
+          VECTOR_BEDROCK_KB_ID: ""
+          VECTOR_BEDROCK_DATA_SOURCE_ID: ""
+      Policies:
+        # Quyền đọc ghi S3
+        - S3CrudPolicy:
+            BucketName: !Ref StudyBotStorageBucket
+        # Quyền đọc ghi DynamoDB
+        - DynamoDBCrudPolicy:
+            TableName: !Ref StudyBotUserStoreTable
+        # Quyền gọi AI Bedrock
+        - Statement:
+            - Effect: Allow
+              Action:
+                - bedrock:InvokeModel
+                - bedrock:StartIngestionJob
+                - bedrock:Retrieve
+              Resource: "*"
+      Events:
+        ApiEvent:
+          Type: HttpApi
+          Properties:
+            ApiId: !Ref StudyBotApiGateway
+            Path: /{proxy+}
+            Method: ANY
+            Auth:
+              Authorizer: CognitoAuth
+        ApiOptionsEvent:
+          Type: HttpApi
+          Properties:
+            ApiId: !Ref StudyBotApiGateway
+            Path: /{proxy+}
+            Method: OPTIONS
+
+Outputs:
+  ApiEndpoint:
+    Description: "API Gateway endpoint URL"
+    Value: !Sub "https://${StudyBotApiGateway}.execute-api.${AWS::Region}.amazonaws.com"
+  CognitoUserPoolId:
+    Description: "Cognito User Pool ID"
+    Value: !Ref StudyBotUserPool
+  CognitoClientId:
+    Description: "Cognito App Client ID"
+    Value: !Ref StudyBotUserPoolClient
+  S3BucketName:
+    Description: "S3 Bucket Name"
+    Value: !Ref StudyBotStorageBucket
+  DynamoDBTableName:
+    Description: "DynamoDB Table Name"
+    Value: !Ref StudyBotUserStoreTable
+  FrontendURL:
+    Description: "Frontend S3 Website URL"
+    Value: !GetAtt StudyBotFrontendBucket.WebsiteURL

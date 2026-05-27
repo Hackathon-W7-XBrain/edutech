@@ -25,14 +25,21 @@ class BedrockKBVector:
         import boto3
         if not kb_id:
             raise ValueError("VECTOR_BEDROCK_KB_ID must be set for Bedrock KB backend")
+        from src.config import config
         self.kb_id = kb_id
+        self.data_source_id = config.vector_bedrock_data_source_id
         self.agent_runtime = boto3.client("bedrock-agent-runtime", region_name=region)
 
     def ingest(self, doc_id: str, text: str, metadata: Optional[dict] = None) -> None:
-        # Ingestion is typically S3-event driven. Trigger a manual sync if needed
-        # via StartIngestionJob — but the doc must already be in the KB's S3 source.
-        # This adapter assumes upstream code uploaded to S3 already.
-        pass
+        if not self.data_source_id:
+            return  # Skip if Data Source ID is not provided
+        try:
+            self.agent_runtime.start_ingestion_job(
+                knowledgeBaseId=self.kb_id,
+                dataSourceId=self.data_source_id
+            )
+        except Exception as e:
+            print(f"Failed to start Bedrock KB ingestion: {e}")
 
     def search(self, query: str, top_k: int = 5, filter: Optional[dict] = None) -> list:
         kwargs = {

@@ -1,5 +1,5 @@
 import { api, showToast } from "./api.js";
-import { clearUserId, getUserId, setUserId } from "./session.js";
+import { clearUserId, getUserId, setUserId, clearToken, setToken } from "./session.js";
 
 export function bindAuth({ onAuthChange }) {
   const overlay = document.getElementById("auth-overlay");
@@ -11,66 +11,104 @@ export function bindAuth({ onAuthChange }) {
   const logoutBtn = document.getElementById("logout-btn");
   const userLabel = document.getElementById("user-label");
 
-  async function login() {
-    const username = userField.value.trim();
-    const password = passField.value;
-    if (!username || !password) {
-      errorField.textContent = "Fill in both fields";
-      return;
-    }
-    try {
-      const result = await api("/auth/login", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ username, password }),
-      });
-      setUserId(result.user_id);
-      overlay.classList.remove("open");
-      if (userLabel) {
-        userLabel.textContent = result.user_id;
-      }
-      errorField.textContent = "";
-      showToast(`Signed in as ${result.user_id}`, "success");
-      onAuthChange?.(result.user_id);
-    } catch (error) {
-      errorField.textContent = error.message;
-    }
+  let userPool = null;
+  if (typeof AmazonCognitoIdentity !== 'undefined' && window.COGNITO_USER_POOL_ID) {
+    const poolData = {
+      UserPoolId: window.COGNITO_USER_POOL_ID,
+      ClientId: window.COGNITO_CLIENT_ID
+    };
+    userPool = new AmazonCognitoIdentity.CognitoUserPool(poolData);
   }
 
-  async function register() {
-    const username = userField.value.trim();
+  function login() {
+    let username = userField.value.trim();
     const password = passField.value;
     if (!username || !password) {
       errorField.textContent = "Fill in both fields";
       return;
     }
-    try {
-      const result = await api("/auth/register", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ username, password }),
-      });
-      setUserId(result.user_id);
-      overlay.classList.remove("open");
-      if (userLabel) {
-        userLabel.textContent = result.user_id;
-      }
-      errorField.textContent = "";
-      showToast(`Created ${result.user_id}`, "success");
-      onAuthChange?.(result.user_id);
-    } catch (error) {
-      errorField.textContent = error.message;
+    
+    // Keep original name for display
+    const displayName = username.includes("@") ? username.split("@")[0] : username;
+    // Auto-convert to email format for Cognito
+    if (!username.includes("@")) {
+      username = username + "@studybot.local";
     }
+
+    if (!userPool) {
+      errorField.textContent = "Cognito SDK is not initialized.";
+      return;
+    }
+
+    const authenticationDetails = new AmazonCognitoIdentity.AuthenticationDetails({
+      Username: username,
+      Password: password,
+    });
+
+    const userData = {
+      Username: username,
+      Pool: userPool,
+    };
+    const cognitoUser = new AmazonCognitoIdentity.CognitoUser(userData);
+
+    cognitoUser.authenticateUser(authenticationDetails, {
+      onSuccess: function (result) {
+        const idToken = result.getIdToken().getJwtToken();
+        setToken(idToken);
+        setUserId(displayName);
+        
+        overlay.classList.remove("open");
+        if (userLabel) userLabel.textContent = displayName;
+        errorField.textContent = "";
+        showToast(`Signed in as ${displayName}`, "success");
+        onAuthChange?.(displayName);
+      },
+      onFailure: function (err) {
+        errorField.textContent = err.message || JSON.stringify(err);
+      },
+    });
+  }
+
+  function register() {
+    let username = userField.value.trim();
+    const password = passField.value;
+    if (!username || !password) {
+      errorField.textContent = "Fill in both fields";
+      return;
+    }
+
+    if (!username.includes("@")) {
+      username = username + "@studybot.local";
+    }
+
+    if (!userPool) {
+      errorField.textContent = "Cognito SDK is not initialized.";
+      return;
+    }
+
+    userPool.signUp(username, password, [], null, function (err, result) {
+      if (err) {
+        errorField.textContent = err.message || JSON.stringify(err);
+        return;
+      }
+      showToast(`Created ${username}, logging in...`, "success");
+      login();
+    });
   }
 
   loginBtn?.addEventListener("click", login);
   registerBtn?.addEventListener("click", register);
   logoutBtn?.addEventListener("click", () => {
-    clearUserId();
-    overlay.classList.add("open");
-    if (userLabel) {
-      userLabel.textContent = "";
+    if (userPool) {
+      const currentUser = userPool.getCurrentUser();
+      if (currentUser) {
+          currentUser.signOut();
+      }
     }
+    clearUserId();
+    clearToken();
+    overlay.classList.add("open");
+    if (userLabel) userLabel.textContent = "";
     onAuthChange?.("");
   });
   passField?.addEventListener("keydown", (event) => {
@@ -82,23 +120,22 @@ export function bindAuth({ onAuthChange }) {
   const currentUser = getUserId();
   if (currentUser) {
     overlay.classList.remove("open");
-    if (userLabel) {
-      userLabel.textContent = currentUser;
-    }
+    if (userLabel) userLabel.textContent = currentUser;
     onAuthChange?.(currentUser);
   } else {
     overlay.classList.add("open");
   }
 
   window.addEventListener("studybot:unauthorized", () => {
+    if (userPool) {
+      const cognitoUser = userPool.getCurrentUser();
+      if (cognitoUser) cognitoUser.signOut();
+    }
     clearUserId();
+    clearToken();
     overlay.classList.add("open");
-    if (userLabel) {
-      userLabel.textContent = "";
-    }
-    if (errorField) {
-      errorField.textContent = "Session expired. Sign in again.";
-    }
+    if (userLabel) userLabel.textContent = "";
+    if (errorField) errorField.textContent = "Session expired. Sign in again.";
     onAuthChange?.("");
   });
 }
