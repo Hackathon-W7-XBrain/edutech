@@ -157,8 +157,8 @@ Resources:
           STORAGE_BUCKET: !Ref StudyBotStorageBucket
           USERSTORE_BACKEND: dynamodb
           USERSTORE_TABLE: !Ref StudyBotUserStoreTable
-          VECTOR_BEDROCK_KB_ID: ""
-          VECTOR_BEDROCK_DATA_SOURCE_ID: ""
+          VECTOR_BEDROCK_KB_ID: "S90N6FZZCP"
+          VECTOR_BEDROCK_DATA_SOURCE_ID: "DCLBLD8WJZ"
       Policies:
         # Quyền đọc ghi S3
         - S3CrudPolicy:
@@ -189,6 +189,50 @@ Resources:
             ApiId: !Ref StudyBotApiGateway
             Path: /{proxy+}
             Method: OPTIONS
+
+  # ---------------------------------------------------------
+  # 5. Ingest Pipeline (S3-triggered Lambda)
+  # ---------------------------------------------------------
+  # Flow: S3 ObjectCreated (.pdf) → Extract text (pypdf) → Chunk
+  #       → Write chunks to processed/ → Bedrock KB ingestion job
+  # Anti-loop: suffix filter (.pdf only) + code-level prefix guard
+  StudyBotIngestFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: hofang-StudyBotIngest
+      CodeUri: .
+      Handler: src.ingest.handler
+      Timeout: 120
+      MemorySize: 1024
+      Environment:
+        Variables:
+          STORAGE_BUCKET: !Sub "hofang-studybot-storage-${AWS::AccountId}-${AWS::Region}"
+          USERSTORE_BACKEND: dynamodb
+          USERSTORE_TABLE: !Ref StudyBotUserStoreTable
+          VECTOR_BEDROCK_KB_ID: "S90N6FZZCP"
+          VECTOR_BEDROCK_DATA_SOURCE_ID: "DCLBLD8WJZ"
+          AWS_REGION_OVERRIDE: !Ref "AWS::Region"
+      Policies:
+        - S3CrudPolicy:
+            BucketName: !Sub "hofang-studybot-storage-${AWS::AccountId}-${AWS::Region}"
+        - DynamoDBCrudPolicy:
+            TableName: !Ref StudyBotUserStoreTable
+        - Statement:
+            - Effect: Allow
+              Action:
+                - bedrock:StartIngestionJob
+              Resource: "*"
+      Events:
+        S3Upload:
+          Type: S3
+          Properties:
+            Bucket: !Ref StudyBotStorageBucket
+            Events: s3:ObjectCreated:*
+            Filter:
+              S3Key:
+                Rules:
+                  - Name: suffix
+                    Value: .pdf
 
 Outputs:
   ApiEndpoint:

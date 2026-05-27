@@ -121,7 +121,6 @@ async def api_upload_bank_document(request: Request, file: UploadFile = File(...
         data=data,
         storage=storage,
         userstore=userstore,
-        vector_store=vector_store,
     )
 
 

@@ -221,13 +221,16 @@ def _get_folder_doc_texts(user_id: str, folder_id: str, userstore, vector_store)
     return results
 
 
-def handle_upload(user_id: str, filename: str, data: bytes, storage, userstore, vector_store) -> dict:
+def handle_upload(user_id: str, filename: str, data: bytes, storage, userstore) -> dict:
+    """Save raw file to S3 + record metadata in DynamoDB.
+
+    Text extraction and vector ingestion are handled asynchronously by the
+    S3-triggered ingest Lambda (src/ingest.py).  The document is created with
+    status='processing' and updated to 'ready' once ingestion completes.
+    """
     doc_id = str(uuid.uuid4())
     key = f"{user_id}/{doc_id}/{filename}"
     location = storage.put(key, data)
-    text = _extract_text(filename, data)
-    if text.strip():
-        vector_store.ingest(doc_id=doc_id, text=text, metadata={"user_id": user_id, "filename": filename})
     userstore.add_doc(
         user_id=user_id,
         doc_id=doc_id,
@@ -235,7 +238,7 @@ def handle_upload(user_id: str, filename: str, data: bytes, storage, userstore, 
             "filename": filename,
             "size": len(data),
             "location": location,
-            "chars": len(text),
+            "status": "processing",
             "mime_type": "",
         },
     )
@@ -243,7 +246,7 @@ def handle_upload(user_id: str, filename: str, data: bytes, storage, userstore, 
         "doc_id": doc_id,
         "filename": filename,
         "size": len(data),
-        "chars_extracted": len(text),
+        "status": "processing",
         "location": location,
     }
 
