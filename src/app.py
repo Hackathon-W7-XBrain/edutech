@@ -69,6 +69,11 @@ class FolderRenameRequest(BaseModel):
 class FolderDocumentsRequest(BaseModel):
     doc_ids: list[str]
 
+class UploadUrlRequest(BaseModel):
+    filename: str
+    size: int = 0
+    content_type: str = "application/octet-stream"
+
 
 class SessionCreateRequest(BaseModel):
     title: str | None = None
@@ -122,6 +127,20 @@ async def api_upload_bank_document(request: Request, file: UploadFile = File(...
         storage=storage,
         userstore=userstore,
     )
+
+
+@app.post("/api/bank/documents/upload-url")
+def api_get_bank_upload_url(req: UploadUrlRequest, request: Request, x_user_id: str | None = Header(default=None)) -> dict:
+    user_id = _resolve_user_id(request, x_user_id)
+    result = handlers.handle_upload_url(
+        user_id=user_id,
+        filename=req.filename.strip(),
+        size=req.size,
+        content_type=req.content_type.strip() or "application/octet-stream",
+        storage=storage,
+        userstore=userstore,
+    )
+    return _require_success(result)
 
 
 @app.get("/api/folders")

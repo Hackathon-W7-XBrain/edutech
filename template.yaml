@@ -1,4 +1,4 @@
-AWSTemplateFormatVersion: '2010-09-09'
+AWSTemplateFormatVersion: "2010-09-09"
 Transform: AWS::Serverless-2016-10-31
 Description: >
   StudyBot AWS Backend (Hackathon W7)
@@ -8,7 +8,7 @@ Globals:
   Function:
     Timeout: 30
     MemorySize: 512
-    Runtime: python3.13
+    Runtime: python3.12
 
 Resources:
   # ---------------------------------------------------------
@@ -105,22 +105,34 @@ Resources:
     Properties:
       Bucket: !Ref StudyBotFrontendBucket
       PolicyDocument:
-        Version: '2012-10-17'
+        Version: "2012-10-17"
         Statement:
           - Effect: Allow
             Principal:
               Service: cloudfront.amazonaws.com
-            Action: 's3:GetObject'
+            Action: "s3:GetObject"
             Resource: !Sub "${StudyBotFrontendBucket.Arn}/*"
             Condition:
               StringEquals:
                 "AWS:SourceArn": !Sub "arn:aws:cloudfront::${AWS::AccountId}:distribution/${StudyBotCloudFrontDistribution}"
 
-
   StudyBotStorageBucket:
     Type: AWS::S3::Bucket
     Properties:
       BucketName: !Sub "hofang-studybot-storage-${AWS::AccountId}-${AWS::Region}"
+      CorsConfiguration:
+        CorsRules:
+          - AllowedHeaders:
+              - "*"
+            AllowedMethods:
+              - PUT
+              - GET
+              - HEAD
+            AllowedOrigins:
+              - "*"
+            ExposedHeaders:
+              - ETag
+            MaxAge: 3000
       PublicAccessBlockConfiguration:
         BlockPublicAcls: true
         IgnorePublicAcls: true
@@ -203,8 +215,8 @@ Resources:
           STORAGE_BUCKET: !Ref StudyBotStorageBucket
           USERSTORE_BACKEND: dynamodb
           USERSTORE_TABLE: !Ref StudyBotUserStoreTable
-          VECTOR_BEDROCK_KB_ID: "S90N6FZZCP"
-          VECTOR_BEDROCK_DATA_SOURCE_ID: "DCLBLD8WJZ"
+          VECTOR_BEDROCK_KB_ID: "AGDTAGPBP4"
+          VECTOR_BEDROCK_DATA_SOURCE_ID: "RQMRHCRRIY"
       Policies:
         # Quyền đọc ghi S3
         - S3CrudPolicy:
@@ -255,8 +267,8 @@ Resources:
           STORAGE_BUCKET: !Sub "hofang-studybot-storage-${AWS::AccountId}-${AWS::Region}"
           USERSTORE_BACKEND: dynamodb
           USERSTORE_TABLE: !Ref StudyBotUserStoreTable
-          VECTOR_BEDROCK_KB_ID: "S90N6FZZCP"
-          VECTOR_BEDROCK_DATA_SOURCE_ID: "DCLBLD8WJZ"
+          VECTOR_BEDROCK_KB_ID: "AGDTAGPBP4"
+          VECTOR_BEDROCK_DATA_SOURCE_ID: "RQMRHCRRIY"
           AWS_REGION_OVERRIDE: !Ref "AWS::Region"
       Policies:
         - S3CrudPolicy:

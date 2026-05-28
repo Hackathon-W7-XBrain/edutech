@@ -110,11 +110,25 @@ async function loadBank() {
 }
 
 async function handleUpload(file) {
-  const form = new FormData();
-  form.append("file", file);
   byId("upload-note").textContent = `Uploading ${file.name}...`;
   try {
-    await api("/api/bank/documents/upload", { method: "POST", body: form });
+    const init = await api("/api/bank/documents/upload-url", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        filename: file.name,
+        size: file.size,
+        content_type: file.type || "application/octet-stream",
+      }),
+    });
+    const uploadResp = await fetch(init.upload.url, {
+      method: init.upload.method || "PUT",
+      headers: init.upload.headers || { "Content-Type": file.type || "application/octet-stream" },
+      body: file,
+    });
+    if (!uploadResp.ok) {
+      throw new Error("Upload to storage failed");
+    }
     showToast(`Uploaded ${file.name}`, "success");
     byId("upload-note").textContent = `${file.name} uploaded`;
     await loadBank();

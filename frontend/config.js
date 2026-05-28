@@ -3,7 +3,7 @@ const isLocal =
   window.location.hostname === "localhost";
 window.API_BASE_URL = isLocal
   ? ""
-  : "https://540rls5sxg.execute-api.ap-southeast-1.amazonaws.com";
+  : "https://74hnwcflk1.execute-api.ap-southeast-1.amazonaws.com";
 
-window.COGNITO_USER_POOL_ID = "ap-southeast-1_39LOCIDa9";
-window.COGNITO_CLIENT_ID = "1g7erhnlrrlgh7074rff2jnith";
+window.COGNITO_USER_POOL_ID = "ap-southeast-1_fFzMyETft";
+window.COGNITO_CLIENT_ID = "2ges2hhlmjlrhco058hpo2h7ov";
