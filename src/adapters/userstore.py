@@ -210,7 +210,14 @@ class DynamoDBUserStore:
         if not item:
             return None
         docs = self.get_folder_docs(user_id, folder_id)
-        return {"folder_id": folder_id, "name": item.get("name", ""), "created_at": item.get("created_at", ""), "docs": docs}
+        return {
+            "folder_id": folder_id,
+            "name": item.get("name", ""),
+            "created_at": item.get("created_at", ""),
+            "docs": docs,
+            "doc_count": len(docs),
+            "topics_generated": False,
+        }
 
     def get_folder_by_name(self, user_id: str, name: str) -> dict | None:
         folders = self.list_folders(user_id)
@@ -430,10 +437,10 @@ class DynamoDBUserStore:
         ]
 
     def get_folder_dashboard(self, user_id: str, folder_id: str) -> dict:
-        from decimal import Decimal
         folder = self.get_folder(user_id, folder_id)
         if not folder:
             raise ValueError("Folder not found")
+        docs = self.get_folder_docs(user_id, folder_id)
         topics = self.list_folder_topics(user_id, folder_id)
         sessions = self.list_chat_sessions(user_id, folder_id)
         quizzes = self.list_folder_quiz_attempts(user_id, folder_id, limit=50)
@@ -442,13 +449,18 @@ class DynamoDBUserStore:
             avg_score = round(sum(q.get("percentage", 0) for q in quizzes) / len(quizzes))
         return {
             "folder": folder,
+            "docs": docs,
+            "file_count": len(docs),
             "topic_count": len(topics),
             "session_count": len(sessions),
-            "doc_count": len(folder.get("docs", [])),
+            "doc_count": len(docs),
             "quiz_count": len(quizzes),
             "avg_quiz_score": avg_score,
             "recent_quizzes": quizzes[:10],
             "topics": topics,
+            "question_count": 0,
+            "quiz_history": quizzes[:10],
+            "topic_progress": [],
         }
 
 
