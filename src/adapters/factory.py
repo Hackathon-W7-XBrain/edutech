@@ -43,8 +43,6 @@ def make_userstore():
 # ingested docs persist for the process lifetime. (Bedrock KB is naturally
 # stateful via the KB id.)
 _local_vector_singleton: vector.LocalVector | None = None
-
-
 def make_vector():
     global _local_vector_singleton
     if config.vector_backend == "bedrock_kb":

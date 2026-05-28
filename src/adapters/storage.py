@@ -12,9 +12,14 @@ from typing import Any
 class S3Storage:
     def __init__(self, bucket: str, region: str):
         import boto3
+        from botocore.config import Config
         if not bucket:
             raise ValueError("STORAGE_BUCKET must be set for S3 backend")
-        self.s3 = boto3.client("s3", region_name=region)
+        self.s3 = boto3.client(
+            "s3",
+            region_name=region,
+            config=Config(signature_version="s3v4", s3={"addressing_style": "virtual"}),
+        )
         self.bucket = bucket
 
     def put(self, key: str, data: bytes) -> str:
@@ -28,6 +33,22 @@ class S3Storage:
     def list(self, prefix: str = "") -> list:
         resp = self.s3.list_objects_v2(Bucket=self.bucket, Prefix=prefix)
         return [obj["Key"] for obj in resp.get("Contents", [])]
+
+    def create_presigned_put(self, key: str, content_type: str, expires_in: int = 900) -> dict[str, str]:
+        url = self.s3.generate_presigned_url(
+            ClientMethod="put_object",
+            Params={
+                "Bucket": self.bucket,
+                "Key": key,
+                "ContentType": content_type,
+            },
+            ExpiresIn=expires_in,
+        )
+        return {
+            "url": url,
+            "method": "PUT",
+            "location": f"s3://{self.bucket}/{key}",
+        }
 
 
 class LocalStorage:

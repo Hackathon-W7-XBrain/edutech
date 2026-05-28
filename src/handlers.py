@@ -251,6 +251,40 @@ def handle_upload(user_id: str, filename: str, data: bytes, storage, userstore) 
     }
 
 
+def handle_upload_url(user_id: str, filename: str, size: int, content_type: str, storage, userstore) -> dict:
+    if not filename:
+        return {"error": "Filename is required"}
+    filename = filename.replace("/", "_").replace("\\", "_")
+    if not hasattr(storage, "create_presigned_put"):
+        return {"error": "Presigned upload is only supported with S3 storage backend"}
+    doc_id = str(uuid.uuid4())
+    key = f"{user_id}/{doc_id}/{filename}"
+    result = storage.create_presigned_put(key=key, content_type=content_type or "application/octet-stream")
+    userstore.add_doc(
+        user_id=user_id,
+        doc_id=doc_id,
+        metadata={
+            "filename": filename,
+            "size": size,
+            "location": result["location"],
+            "status": "processing",
+            "mime_type": content_type or "application/octet-stream",
+        },
+    )
+    return {
+        "doc_id": doc_id,
+        "filename": filename,
+        "size": size,
+        "status": "processing",
+        "location": result["location"],
+        "upload": {
+            "url": result["url"],
+            "method": result["method"],
+            "headers": {"Content-Type": content_type or "application/octet-stream"},
+        },
+    }
+
+
 def handle_list_docs(user_id: str, userstore) -> dict:
     return {"user_id": user_id, "docs": userstore.list_docs(user_id)}
 
