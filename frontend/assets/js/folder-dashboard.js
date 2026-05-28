@@ -6,28 +6,29 @@ import {
   loadFolderBundle,
   renderFolderChrome,
   renderFolderDocs,
-  renderQuizHistory,
-  renderTopicProgress,
 } from "./folder-common.js";
 
 const folderId = getFolderId();
 
-function renderStats(dashboard) {
+function renderStats(fileCount) {
   byId("stats-grid").innerHTML = `
-    <div class="stat-box"><strong>${dashboard.file_count}</strong><span>Files</span></div>
-    <div class="stat-box"><strong>${dashboard.question_count}</strong><span>Questions</span></div>
-    <div class="stat-box"><strong>${dashboard.quiz_history.length}</strong><span>Quizzes</span></div>
-    <div class="stat-box"><strong>${dashboard.topic_progress.length}</strong><span>Topics</span></div>
+    <div class="stat-box"><strong>${fileCount}</strong><span>Files</span></div>
   `;
+}
+
+function renderPlaceholder(hostId, message) {
+  byId(hostId).innerHTML = `<div class="empty">${message}</div>`;
 }
 
 async function loadPage() {
   const bundle = await loadFolderBundle(folderId);
+  const docs = bundle.dashboard.docs || bundle.docs || [];
+
   renderFolderChrome(bundle.folder, "dashboard");
-  renderStats(bundle.dashboard);
-  renderFolderDocs("folder-docs", bundle.docs, "No files.");
-  renderTopicProgress("topic-progress", bundle.topics);
-  renderQuizHistory("quiz-history", bundle.dashboard.quiz_history);
+  renderStats(bundle.dashboard.file_count ?? docs.length);
+  renderFolderDocs("folder-docs", docs, "No files.");
+  renderPlaceholder("topic-progress", "Current DynamoDB data only has folder and file items.");
+  renderPlaceholder("quiz-history", "No quiz data yet.");
 }
 
 bindAuth({
