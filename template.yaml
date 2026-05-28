@@ -49,14 +49,56 @@ Resources:
     Type: AWS::S3::Bucket
     Properties:
       BucketName: !Sub "hofang-studybot-frontend-${AWS::AccountId}-${AWS::Region}"
-      WebsiteConfiguration:
-        IndexDocument: index.html
-        ErrorDocument: index.html
       PublicAccessBlockConfiguration:
-        BlockPublicAcls: false
-        IgnorePublicAcls: false
-        BlockPublicPolicy: false
-        RestrictPublicBuckets: false
+        BlockPublicAcls: true
+        IgnorePublicAcls: true
+        BlockPublicPolicy: true
+        RestrictPublicBuckets: true
+
+  StudyBotCloudFrontOAC:
+    Type: AWS::CloudFront::OriginAccessControl
+    Properties:
+      OriginAccessControlConfig:
+        Name: !Sub "StudyBotOAC-${AWS::AccountId}-${AWS::Region}"
+        OriginAccessControlOriginType: s3
+        SigningBehavior: always
+        SigningProtocol: sigv4
+
+  StudyBotCloudFrontDistribution:
+    Type: AWS::CloudFront::Distribution
+    Properties:
+      DistributionConfig:
+        Enabled: true
+        DefaultRootObject: index.html
+        HttpVersion: http2
+        Origins:
+          - Id: StudyBotFrontendBucketOrigin
+            DomainName: !GetAtt StudyBotFrontendBucket.RegionalDomainName
+            S3OriginConfig:
+              OriginAccessIdentity: ""
+            OriginAccessControlId: !GetAtt StudyBotCloudFrontOAC.Id
+        DefaultCacheBehavior:
+          TargetOriginId: StudyBotFrontendBucketOrigin
+          ViewerProtocolPolicy: redirect-to-https
+          AllowedMethods:
+            - GET
+            - HEAD
+            - OPTIONS
+          CachedMethods:
+            - GET
+            - HEAD
+            - OPTIONS
+          ForwardedValues:
+            QueryString: false
+            Cookies:
+              Forward: none
+        CustomErrorResponses:
+          - ErrorCode: 403
+            ResponseCode: 200
+            ResponsePagePath: /index.html
+          - ErrorCode: 404
+            ResponseCode: 200
+            ResponsePagePath: /index.html
 
   StudyBotFrontendBucketPolicy:
     Type: AWS::S3::BucketPolicy
@@ -66,9 +108,13 @@ Resources:
         Version: '2012-10-17'
         Statement:
           - Effect: Allow
-            Principal: '*'
+            Principal:
+              Service: cloudfront.amazonaws.com
             Action: 's3:GetObject'
             Resource: !Sub "${StudyBotFrontendBucket.Arn}/*"
+            Condition:
+              StringEquals:
+                "AWS:SourceArn": !Sub "arn:aws:cloudfront::${AWS::AccountId}:distribution/${StudyBotCloudFrontDistribution}"
 
 
   StudyBotStorageBucket:
@@ -251,5 +297,5 @@ Outputs:
     Description: "DynamoDB Table Name"
     Value: !Ref StudyBotUserStoreTable
   FrontendURL:
-    Description: "Frontend S3 Website URL"
-    Value: !GetAtt StudyBotFrontendBucket.WebsiteURL
+    Description: "Frontend CloudFront URL"
+    Value: !Sub "https://${StudyBotCloudFrontDistribution.DomainName}"
